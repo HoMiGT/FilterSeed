@@ -8,14 +8,12 @@ import NotStartedOutlinedIcon from '@mui/icons-material/NotStartedOutlined';
 
 
 function App() {
-
     const [isDisabled, setIsDisabled] = React.useState(false);
     const [findCount, setFindCount] = React.useState(0);
     const [copiedCount, setCopiedCount] = React.useState(0);
     const [progress, setProgress] = React.useState(0);
 
     const PathsRef = React.useRef(null);
-
     const timerRef = React.useRef(null);
 
     React.useEffect(() => {
@@ -93,7 +91,7 @@ function App() {
                 }}/>
                 <div style={{
                     alignContent: "Right",
-                    textAlign: "Right",
+                    textAlign: "end",
                 }}>
                     <Button variant="contained" id={"start-copy"}
                             disabled={isDisabled}

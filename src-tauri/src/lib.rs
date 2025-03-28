@@ -13,7 +13,6 @@ use std::sync::atomic::Ordering::Relaxed;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::{env, io};
-use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_fs::FilePath;
 use tokio::time::{sleep, Duration};
@@ -21,12 +20,6 @@ use tokio::time::{sleep, Duration};
 lazy_static! {
     static ref GLOBAL_COPY_COUNTER: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     static ref GLOBAL_TOTAL_COUNTER: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
-}
-
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
 #[tauri::command]
@@ -78,26 +71,38 @@ impl PartialEq<&str> for NavFileType {
     }
 }
 
-#[derive(Serialize)]
-struct CopyProgressState {
-    total_files: usize,
-    copied_files: usize,
-}
-
-async fn copy_txt_files(
-    win: &tauri::Window,
+async fn copy_files(
+    file_suffix_type: NavFileType,
     file_path: &str,
     src_path: &str,
     dst_path: &str,
 ) -> io::Result<()> {
-    let file = File::open(file_path)?;
-    let reader = io::BufReader::new(file);
     let mut library_filename_vec = Vec::new();
-    for line in reader.lines() {
-        match line {
-            Ok(code) => library_filename_vec.push(code),
-            Err(_) => continue,
+    match file_suffix_type {
+        NavFileType::TXT => {
+            let file = File::open(file_path)?;
+            let reader = io::BufReader::new(file);
+            for line in reader.lines() {
+                match line {
+                    Ok(code) => library_filename_vec.push(code),
+                    Err(_) => continue,
+                }
+            }
         }
+        NavFileType::CSV => {
+            let file = File::open(file_path)?;
+            let mut reader = csv_reader::from_reader(file);
+            for result in reader.records() {
+                match result {
+                    Ok(record) => {
+                        let code = record.get(0).unwrap_or_default();
+                        library_filename_vec.push(code.to_string());
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+        _ => {}
     }
     let mut src_filename_vec = Vec::new();
     if let Ok(entries) = fs::read_dir(src_path) {
@@ -113,7 +118,7 @@ async fn copy_txt_files(
                         }
                     }
                 }
-                Err(e) => {}
+                Err(_) => {}
             }
         }
     }
@@ -176,12 +181,7 @@ async fn copy_txt_files(
 }
 
 #[tauri::command]
-async fn start_copy(
-    win: tauri::Window,
-    choice_file: &str,
-    seed_dir: &str,
-    target_dir: &str,
-) -> Result<(), String> {
+async fn start_copy(choice_file: &str, seed_dir: &str, target_dir: &str) -> Result<(), String> {
     GLOBAL_COPY_COUNTER.store(0, Ordering::SeqCst);
     {
         let mut counter = GLOBAL_TOTAL_COUNTER.lock().unwrap();
@@ -207,7 +207,6 @@ async fn start_copy(
     if !target_dir_path.exists() {
         return Err(format!("`{}`,路径不存在!!!", target_dir_path_str));
     }
-
     // 将后缀转换成enum
     let suffix = match ext {
         Some(ext) => {
@@ -223,8 +222,8 @@ async fn start_copy(
     };
     match suffix {
         NavFileType::TXT => {
-            match copy_txt_files(
-                &win,
+            match copy_files(
+                NavFileType::TXT,
                 choice_file_path_str,
                 seed_dir_path_str,
                 target_dir_path_str,
@@ -235,7 +234,19 @@ async fn start_copy(
                 Err(err) => return Err(err.to_string()),
             }
         }
-        NavFileType::CSV => {}
+        NavFileType::CSV => {
+            match copy_files(
+                NavFileType::CSV,
+                choice_file_path_str,
+                seed_dir_path_str,
+                target_dir_path_str,
+            )
+            .await
+            {
+                Ok(_) => {}
+                Err(err) => return Err(err.to_string()),
+            }
+        }
         NavFileType::NONE => {
             return Err(format!(
                 "`{}`,不支持的文件后缀！！！",
@@ -282,7 +293,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
             choice_file,
             choice_src_dir,
             choice_dst_dir,
